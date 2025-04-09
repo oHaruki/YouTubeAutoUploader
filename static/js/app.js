@@ -10,10 +10,14 @@ let refreshInterval;
 
 // DOM Ready
 document.addEventListener('DOMContentLoaded', function() {
+    console.log("App initialization started");
+    
     // Get initial state from the page
     isMonitoring = document.getElementById('statusIndicator').innerText.includes('Monitoring');
     isAuthenticated = !document.getElementById('statusIndicator').innerText.includes('Not Authenticated');
     currentTheme = document.documentElement.getAttribute('data-bs-theme') || 'light';
+    
+    console.log(`Initial state - Monitoring: ${isMonitoring}, Authenticated: ${isAuthenticated}`);
     
     // Check for upload limit
     const limitResetTimeEl = document.getElementById('limitResetTime');
@@ -22,6 +26,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const timeData = limitResetTimeEl.getAttribute('data-time');
         if (timeData) {
             uploadLimitResetTime = new Date(timeData);
+            console.log(`Upload limit reached, reset time: ${uploadLimitResetTime}`);
         }
     }
     
@@ -42,9 +47,9 @@ document.addEventListener('DOMContentLoaded', function() {
         uploadApiProject();
     });
     
-    // Start refresh interval for queue
-    refreshInterval = setInterval(refreshQueue, 2000);
-    refreshQueue();
+    // Start refresh interval for queue - more frequent updates
+    refreshInterval = setInterval(refreshQueue, 1000); // Changed from 2000 to 1000ms
+    refreshQueue(); // Immediate first refresh
     
     // Update upload limit timer if needed
     if (uploadLimitReached && uploadLimitResetTime) {
@@ -56,6 +61,8 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('settings-tab').addEventListener('shown.bs.tab', function (e) {
         loadChannels();
     });
+    
+    console.log("App initialized successfully");
 });
 
 // Theme toggle functionality
@@ -99,16 +106,30 @@ function refreshQueue() {
         .then(response => response.json())
         .then(data => {
             if (data.success) {
+                // Check if the queue has changed
+                const hasChanged = JSON.stringify(uploadQueue) !== JSON.stringify(data.queue);
+                
                 uploadQueue = data.queue;
-                isMonitoring = data.is_monitoring;
+                const newMonitoringState = data.is_monitoring;
+                
+                // Check if monitoring state changed
+                if (isMonitoring !== newMonitoringState) {
+                    console.log(`Monitoring state changed: ${isMonitoring} -> ${newMonitoringState}`);
+                    isMonitoring = newMonitoringState;
+                    updateMonitoringButtons();
+                    updateStatusIndicator();
+                }
+                
                 uploadLimitReached = data.upload_limit_reached;
                 
                 if (data.upload_limit_reset_time) {
                     uploadLimitResetTime = new Date(data.upload_limit_reset_time);
                 }
                 
-                updateQueueUI();
-                updateMonitoringButtons();
+                if (hasChanged) {
+                    console.log("Queue updated, refreshing UI");
+                    updateQueueUI();
+                }
             }
         })
         .catch(error => console.error('Error refreshing queue:', error));
@@ -242,34 +263,58 @@ function formatFileSize(bytes) {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
 
+function capitalizeFirstLetter(string) {
+    return string.charAt(0).toUpperCase() + string.slice(1);
+}
+
 function cancelTask(taskId) {
+    console.log(`Cancelling task: ${taskId}`);
     fetch(`/api/task/${taskId}/cancel`, {
         method: 'POST'
     })
     .then(response => response.json())
     .then(data => {
         if (data.success) {
+            console.log(`Task ${taskId} cancelled successfully`);
             refreshQueue();
+            showToast('Success', 'Task cancelled successfully', 'success');
+        } else {
+            console.error(`Failed to cancel task ${taskId}: ${data.error}`);
+            showToast('Error', `Failed to cancel task: ${data.error || 'Unknown error'}`, 'danger');
         }
     })
-    .catch(error => console.error('Error cancelling task:', error));
+    .catch(error => {
+        console.error('Error cancelling task:', error);
+        showToast('Error', 'Error cancelling task', 'danger');
+    });
 }
 
 function clearCompletedUploads() {
+    console.log("Clearing completed uploads");
     fetch('/api/queue/clear-completed', {
         method: 'POST'
     })
     .then(response => response.json())
     .then(data => {
         if (data.success) {
+            console.log("Completed uploads cleared successfully");
             refreshQueue();
+            showToast('Success', 'Completed uploads cleared', 'success');
+        } else {
+            console.error(`Failed to clear completed uploads: ${data.error}`);
+            showToast('Error', `Failed to clear completed uploads: ${data.error || 'Unknown error'}`, 'danger');
         }
     })
-    .catch(error => console.error('Error clearing completed uploads:', error));
+    .catch(error => {
+        console.error('Error clearing completed uploads:', error);
+        showToast('Error', 'Error clearing completed uploads', 'danger');
+    });
 }
 
 // Monitoring controls
 function startMonitoring() {
+    console.log("Starting monitoring");
+    
     // Show loading indicator on the button
     const startBtn = document.getElementById('startMonitoringBtn');
     const originalText = startBtn.innerHTML;
@@ -284,12 +329,17 @@ function startMonitoring() {
         startBtn.innerHTML = originalText;
         
         if (data.success) {
+            console.log("Monitoring started successfully");
             isMonitoring = true;
             updateMonitoringButtons();
             updateStatusIndicator();
+            
+            // Force immediate queue refresh
             refreshQueue();
+            
             showToast('Success', 'Started monitoring folder for videos', 'success');
         } else {
+            console.error(`Failed to start monitoring: ${data.error}`);
             startBtn.disabled = false;
             showToast('Error', 'Failed to start monitoring: ' + (data.error || 'Unknown error'), 'danger');
         }
@@ -303,21 +353,40 @@ function startMonitoring() {
 }
 
 function stopMonitoring() {
+    console.log("Stopping monitoring");
+    
+    // Show loading indicator
+    const stopBtn = document.getElementById('stopMonitoringBtn');
+    const originalText = stopBtn.innerHTML;
+    stopBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span> Stopping...';
+    stopBtn.disabled = true;
+    
     fetch('/api/monitor/stop', {
         method: 'POST'
     })
     .then(response => response.json())
     .then(data => {
+        stopBtn.innerHTML = originalText;
+        stopBtn.disabled = false;
+        
         if (data.success) {
+            console.log("Monitoring stopped successfully");
             isMonitoring = false;
             updateMonitoringButtons();
             updateStatusIndicator();
+            
+            // Force immediate queue refresh
             refreshQueue();
+            
+            showToast('Success', 'Stopped monitoring folder', 'success');
         } else {
+            console.error(`Failed to stop monitoring: ${data.error}`);
             showToast('Error', 'Failed to stop monitoring: ' + (data.error || 'Unknown error'), 'danger');
         }
     })
     .catch(error => {
+        stopBtn.innerHTML = originalText;
+        stopBtn.disabled = false;
         console.error('Error stopping monitoring:', error);
         showToast('Error', 'Error stopping monitoring. Check console for details.', 'danger');
     });
@@ -385,6 +454,14 @@ function updateUploadLimitTimer() {
 
 // Settings management
 function saveSettings() {
+    console.log("Saving settings");
+    
+    // Show loading indicator
+    const saveBtn = document.getElementById('saveSettingsBtn');
+    const originalText = saveBtn.innerHTML;
+    saveBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span> Saving...';
+    saveBtn.disabled = true;
+    
     // Gather all settings
     const settings = {
         title_template: document.getElementById('titleTemplate').value,
@@ -409,14 +486,24 @@ function saveSettings() {
     })
     .then(response => response.json())
     .then(data => {
+        // Restore button
+        saveBtn.innerHTML = originalText;
+        saveBtn.disabled = false;
+        
         if (data.success) {
             // Show success message
+            console.log("Settings saved successfully");
             showToast('Success', 'Settings saved successfully!', 'success');
         } else {
+            console.error(`Failed to save settings: ${data.error}`);
             showToast('Error', 'Failed to save settings: ' + (data.error || 'Unknown error'), 'danger');
         }
     })
     .catch(error => {
+        // Restore button
+        saveBtn.innerHTML = originalText;
+        saveBtn.disabled = false;
+        
         console.error('Error saving settings:', error);
         showToast('Error', 'Error saving settings. Check console for details.', 'danger');
     });
@@ -424,13 +511,14 @@ function saveSettings() {
 
 // Toast notification
 function showToast(title, message, type = 'info') {
-    const toastContainer = document.querySelector('.toast-container');
+    // Check if toast container exists
+    let toastContainer = document.querySelector('.toast-container');
     
     // Create container if it doesn't exist
     if (!toastContainer) {
-        const container = document.createElement('div');
-        container.className = 'toast-container position-fixed bottom-0 end-0 p-3';
-        document.body.appendChild(container);
+        toastContainer = document.createElement('div');
+        toastContainer.className = 'toast-container position-fixed bottom-0 end-0 p-3';
+        document.body.appendChild(toastContainer);
     }
     
     // Create toast element
@@ -449,7 +537,7 @@ function showToast(title, message, type = 'info') {
         </div>
     `;
     
-    document.querySelector('.toast-container').appendChild(toastEl);
+    toastContainer.appendChild(toastEl);
     
     // Initialize and show toast
     const toast = new bootstrap.Toast(toastEl, { autohide: true, delay: 5000 });
@@ -463,6 +551,8 @@ function showToast(title, message, type = 'info') {
 
 // Channel selection functions
 function loadChannels() {
+    console.log("Loading YouTube channels");
+    
     const loadingEl = document.getElementById('channelsLoading');
     const listEl = document.getElementById('channelsList');
     const errorEl = document.getElementById('channelsError');
@@ -488,6 +578,7 @@ function loadChannels() {
                         </div>
                     `;
                 } else {
+                    console.log(`Found ${data.channels.length} YouTube channels`);
                     // Display channels
                     listEl.innerHTML = '<div class="list-group">';
                     
@@ -520,6 +611,7 @@ function loadChannels() {
                 listEl.classList.remove('d-none');
             } else {
                 // Show error
+                console.error(`Failed to load channels: ${data.error}`);
                 errorEl.textContent = data.error || 'Failed to load channels';
                 errorEl.classList.remove('d-none');
             }
@@ -532,6 +624,8 @@ function loadChannels() {
 }
 
 function selectChannel(channelId) {
+    console.log(`Selecting channel: ${channelId}`);
+    
     fetch('/api/channels/select', {
         method: 'POST',
         headers: {
@@ -545,9 +639,11 @@ function selectChannel(channelId) {
     .then(data => {
         if (data.success) {
             // Reload channel list to show updated selection
+            console.log("Channel selected successfully");
             loadChannels();
             showToast('Success', 'Channel selected successfully!', 'success');
         } else {
+            console.error(`Failed to select channel: ${data.error}`);
             showToast('Error', 'Failed to select channel: ' + (data.error || 'Unknown error'), 'danger');
         }
     })
@@ -559,6 +655,8 @@ function selectChannel(channelId) {
 
 // API Projects functions
 function loadApiProjects() {
+    console.log("Loading API projects");
+    
     const loadingEl = document.getElementById('projectsLoading');
     const listEl = document.getElementById('projectsList');
     const errorEl = document.getElementById('projectsError');
@@ -584,6 +682,7 @@ function loadApiProjects() {
                         </div>
                     `;
                 } else {
+                    console.log(`Found ${data.projects.length} API projects`);
                     // Display projects
                     listEl.innerHTML = `
                         <div class="table-responsive">
@@ -641,6 +740,7 @@ function loadApiProjects() {
                 listEl.classList.remove('d-none');
             } else {
                 // Show error
+                console.error(`Failed to load API projects: ${data.error}`);
                 errorEl.textContent = data.error || 'Failed to load API projects';
                 errorEl.classList.remove('d-none');
             }
@@ -653,6 +753,8 @@ function loadApiProjects() {
 }
 
 function selectApiProject(projectId) {
+    console.log(`Selecting API project: ${projectId}`);
+    
     fetch('/api/projects/select', {
         method: 'POST',
         headers: {
@@ -666,12 +768,15 @@ function selectApiProject(projectId) {
     .then(data => {
         if (data.success) {
             // Reload project list
+            console.log("API project selected successfully");
             loadApiProjects();
             showToast('Success', 'API project selected successfully!', 'success');
         } else if (data.needs_auth) {
             // Redirect to auth page
+            console.log(`API project needs authentication, redirecting to auth page for project ${data.project_id}`);
             window.location.href = `/auth/project/${data.project_id}`;
         } else {
+            console.error(`Failed to select API project: ${data.error}`);
             showToast('Error', 'Failed to select project: ' + (data.error || 'Unknown error'), 'danger');
         }
     })
@@ -689,6 +794,8 @@ function uploadApiProject() {
     }
     
     const file = fileInput.files[0];
+    console.log(`Uploading API project file: ${file.name}`);
+    
     if (!file.name.endsWith('.json')) {
         showToast('Warning', 'Please upload a .json file', 'warning');
         return;
@@ -704,10 +811,12 @@ function uploadApiProject() {
     .then(response => response.json())
     .then(data => {
         if (data.success) {
+            console.log(`API project added successfully with ID: ${data.project_id}`);
             showToast('Success', 'API project added successfully! You need to authenticate it now.', 'success');
             loadApiProjects();
             fileInput.value = ''; // Clear the file input
         } else {
+            console.error(`Failed to add API project: ${data.error}`);
             showToast('Error', 'Failed to add API project: ' + (data.error || 'Unknown error'), 'danger');
         }
     })
@@ -715,9 +824,4 @@ function uploadApiProject() {
         console.error('Error uploading API project:', error);
         showToast('Error', 'Error uploading API project', 'danger');
     });
-}
-
-// Utility functions
-function capitalizeFirstLetter(string) {
-    return string.charAt(0).toUpperCase() + string.slice(1);
 }

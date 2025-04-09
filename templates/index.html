@@ -95,15 +95,27 @@
                     <div class="tab-pane fade show active" id="uploads-tab-pane" role="tabpanel" aria-labelledby="uploads-tab" tabindex="0">
                         <div class="card fade-in">
                             <div class="card-header d-flex justify-content-between align-items-center">
-                                <span><i class="bi bi-folder me-2"></i>Watch Folder</span>
+                                <span><i class="bi bi-folder me-2"></i>Folder to Monitor</span>
                             </div>
                             <div class="card-body">
-                                <div class="input-group">
-                                    <input type="text" class="form-control" id="watchFolderPath" value="{{ config.watch_folder }}" readonly>
+                                <div class="alert alert-info mb-3">
+                                    <i class="bi bi-info-circle me-2"></i>
+                                    Select a local folder to monitor for new video files. When a video is found, it will be automatically uploaded to YouTube.
+                                </div>
+                                
+                                <div class="input-group mb-3">
+                                    <input type="text" class="form-control" id="watchFolderPath" value="{{ config.watch_folder }}" placeholder="Enter a local folder path to monitor for videos">
                                     <input type="file" id="folderSelector" webkitdirectory directory style="display: none;">
                                     <button class="btn btn-primary" type="button" id="browseFolderBtn">
                                         <i class="bi bi-folder2-open me-1"></i> Browse
                                     </button>
+                                    <button class="btn btn-success" type="button" id="saveFolderBtn">
+                                        <i class="bi bi-save me-1"></i> Save
+                                    </button>
+                                </div>
+                                
+                                <div id="folderStatus" class="mb-3 d-none">
+                                    <!-- Folder validation status will appear here -->
                                 </div>
                                 
                                 <div class="d-flex justify-content-center mt-4">
@@ -363,7 +375,7 @@
                                                 <h5><i class="bi bi-question-circle text-primary me-2"></i>Getting Started</h5>
                                                 <ol>
                                                     <li>Authenticate with your YouTube account</li>
-                                                    <li>Select the Insights Capture folder to monitor</li>
+                                                    <li>Select the folder to monitor for videos</li>
                                                     <li>Configure upload settings</li>
                                                     <li>Click "Start Monitoring"</li>
                                                     <li>New videos will be automatically uploaded</li>
@@ -393,31 +405,53 @@
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script src="{{ url_for('static', filename='js/app.js') }}"></script>
     <script>
-        // Native folder selection
+        // Enhanced folder selection with validation
         document.addEventListener('DOMContentLoaded', function() {
             const folderSelector = document.getElementById('folderSelector');
             const watchFolderPath = document.getElementById('watchFolderPath');
             const browseFolderBtn = document.getElementById('browseFolderBtn');
+            const saveFolderBtn = document.getElementById('saveFolderBtn');
             const startMonitoringBtn = document.getElementById('startMonitoringBtn');
+            const folderStatus = document.getElementById('folderStatus');
             
+            // Validate folder on load if we have a path
+            if (watchFolderPath.value.trim()) {
+                validateFolderPath(watchFolderPath.value.trim());
+            }
+            
+            // Validate folder when input changes
+            watchFolderPath.addEventListener('change', function() {
+                validateFolderPath(this.value.trim());
+            });
+            
+            watchFolderPath.addEventListener('blur', function() {
+                validateFolderPath(this.value.trim());
+            });
+            
+            // Browse button
             browseFolderBtn.addEventListener('click', function() {
                 folderSelector.click();
             });
             
+            // When a folder is selected
             folderSelector.addEventListener('change', function() {
                 if (this.files && this.files.length > 0) {
-                    // For security reasons, browsers don't provide the full path directly
-                    // We need to use a server-side approach to handle this
-                    
-                    // Create a FormData object to send the first selected file
+                    // Create a FormData object
                     const formData = new FormData();
                     formData.append('folder_file', this.files[0]);
+                    
+                    // Try to get folder path from relative path
+                    const filePath = this.files[0].webkitRelativePath || '';
+                    if (filePath) {
+                        const folderPath = filePath.split('/')[0];
+                        formData.append('folder_path', folderPath);
+                    }
                     
                     // Show a loading indicator
                     browseFolderBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span> Processing...';
                     browseFolderBtn.disabled = true;
                     
-                    // Send the file to the server to extract the folder path
+                    // Send the file to the server
                     fetch('/api/folder/extract-path', {
                         method: 'POST',
                         body: formData
@@ -432,30 +466,10 @@
                             // Update the input field
                             watchFolderPath.value = data.folder_path;
                             
-                            // Save to server config
-                            return fetch('/api/settings', {
-                                method: 'POST',
-                                headers: {
-                                    'Content-Type': 'application/json'
-                                },
-                                body: JSON.stringify({
-                                    watch_folder: data.folder_path
-                                })
-                            });
+                            // Validate the folder
+                            validateFolderPath(data.folder_path);
                         } else {
-                            throw new Error(data.error || 'Failed to extract folder path');
-                        }
-                    })
-                    .then(response => response.json())
-                    .then(data => {
-                        if (data.success) {
-                            showToast('Success', 'Folder selected successfully!', 'success');
-                            // Enable the start monitoring button if authenticated
-                            if (isAuthenticated && !isMonitoring) {
-                                startMonitoringBtn.disabled = false;
-                            }
-                        } else {
-                            showToast('Error', 'Failed to save folder selection: ' + (data.error || 'Unknown error'), 'danger');
+                            showFolderError(data.error || 'Failed to extract folder path');
                         }
                     })
                     .catch(error => {
@@ -464,25 +478,17 @@
                         browseFolderBtn.disabled = false;
                         
                         console.error('Error in folder selection process:', error);
-                        showToast('Error', error.message || 'Error processing folder selection', 'danger');
+                        showFolderError(error.message || 'Error processing folder selection');
                     });
                 }
             });
-        });
-    </script>
-    <script>
-        // Simple folder path input
-        document.addEventListener('DOMContentLoaded', function() {
-            const watchFolderPath = document.getElementById('watchFolderPath');
-            const saveFolderBtn = document.getElementById('saveFolderBtn');
-            const startMonitoringBtn = document.getElementById('startMonitoringBtn');
             
             // Save folder button
             saveFolderBtn.addEventListener('click', function() {
                 const folderPath = watchFolderPath.value.trim();
                 
                 if (!folderPath) {
-                    showToast('Error', 'Please enter a folder path', 'danger');
+                    showFolderError('Please enter a folder path');
                     return;
                 }
                 
@@ -490,6 +496,86 @@
                 saveFolderBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span> Saving...';
                 saveFolderBtn.disabled = true;
                 
+                // First validate the folder path
+                validateFolderPathAndSave(folderPath, saveFolderBtn);
+            });
+            
+            // Function to validate folder path
+            function validateFolderPath(folderPath) {
+                if (!folderPath) {
+                    hideFolderStatus();
+                    return;
+                }
+                
+                fetch('/api/folder/verify', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ folder_path: folderPath })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        showFolderSuccess(data.message || 'Folder is valid and accessible');
+                        if (isAuthenticated && !isMonitoring) {
+                            startMonitoringBtn.disabled = false;
+                        }
+                    } else if (data.warning) {
+                        showFolderWarning(data.error || 'Folder may have limited access');
+                        if (isAuthenticated && !isMonitoring) {
+                            startMonitoringBtn.disabled = false;
+                        }
+                    } else {
+                        showFolderError(data.error || 'Invalid folder path');
+                        startMonitoringBtn.disabled = true;
+                    }
+                })
+                .catch(error => {
+                    console.error('Error validating folder path:', error);
+                    showFolderError('Error validating folder path');
+                    startMonitoringBtn.disabled = true;
+                });
+            }
+            
+            // Function to validate and then save folder path
+            function validateFolderPathAndSave(folderPath, button) {
+                fetch('/api/folder/verify', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ folder_path: folderPath })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success || data.warning) {
+                        // Folder is valid or has a warning but is usable, save it
+                        saveFolderPath(data.folder_path, button);
+                    } else {
+                        // Restore button
+                        button.innerHTML = '<i class="bi bi-save me-1"></i> Save';
+                        button.disabled = false;
+                        
+                        showFolderError(data.error || 'Invalid folder path');
+                        showToast('Error', data.error || 'Invalid folder path', 'danger');
+                        startMonitoringBtn.disabled = true;
+                    }
+                })
+                .catch(error => {
+                    // Restore button
+                    button.innerHTML = '<i class="bi bi-save me-1"></i> Save';
+                    button.disabled = false;
+                    
+                    console.error('Error validating folder path:', error);
+                    showFolderError('Error validating folder path');
+                    showToast('Error', 'Error validating folder path', 'danger');
+                    startMonitoringBtn.disabled = true;
+                });
+            }
+            
+            // Function to save folder path
+            function saveFolderPath(folderPath, button) {
                 // Save to config
                 fetch('/api/settings', {
                     method: 'POST',
@@ -503,28 +589,55 @@
                 .then(response => response.json())
                 .then(data => {
                     // Restore button
-                    saveFolderBtn.innerHTML = '<i class="bi bi-save me-1"></i> Save';
-                    saveFolderBtn.disabled = false;
+                    button.innerHTML = '<i class="bi bi-save me-1"></i> Save';
+                    button.disabled = false;
                     
                     if (data.success) {
                         showToast('Success', 'Folder path saved successfully!', 'success');
+                        showFolderSuccess('Folder saved and ready for monitoring');
+                        
                         // Enable start monitoring button if authenticated
                         if (isAuthenticated && !isMonitoring) {
                             startMonitoringBtn.disabled = false;
                         }
                     } else {
                         showToast('Error', 'Failed to save folder path: ' + (data.error || 'Unknown error'), 'danger');
+                        showFolderError('Failed to save folder path: ' + (data.error || 'Unknown error'));
                     }
                 })
                 .catch(error => {
                     // Restore button
-                    saveFolderBtn.innerHTML = '<i class="bi bi-save me-1"></i> Save';
-                    saveFolderBtn.disabled = false;
+                    button.innerHTML = '<i class="bi bi-save me-1"></i> Save';
+                    button.disabled = false;
                     
                     console.error('Error saving folder path:', error);
                     showToast('Error', 'Error saving folder path', 'danger');
+                    showFolderError('Error saving folder path');
                 });
-            });
+            }
+            
+            // Show folder status functions
+            function showFolderSuccess(message) {
+                folderStatus.className = 'alert alert-success mb-3';
+                folderStatus.innerHTML = `<i class="bi bi-check-circle me-2"></i>${message}`;
+                folderStatus.classList.remove('d-none');
+            }
+            
+            function showFolderWarning(message) {
+                folderStatus.className = 'alert alert-warning mb-3';
+                folderStatus.innerHTML = `<i class="bi bi-exclamation-triangle me-2"></i>${message}`;
+                folderStatus.classList.remove('d-none');
+            }
+            
+            function showFolderError(message) {
+                folderStatus.className = 'alert alert-danger mb-3';
+                folderStatus.innerHTML = `<i class="bi bi-x-circle me-2"></i>${message}`;
+                folderStatus.classList.remove('d-none');
+            }
+            
+            function hideFolderStatus() {
+                folderStatus.classList.add('d-none');
+            }
         });
     </script>
 </body>

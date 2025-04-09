@@ -3,7 +3,13 @@ Models for YouTube Auto Uploader
 """
 import os
 import time
+import logging
 from datetime import datetime
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, 
+                   format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger('models')
 
 class UploadTask:
     """
@@ -26,34 +32,59 @@ class UploadTask:
         delete_success (bool): Whether file deletion was successful
     """
     def __init__(self, file_path):
-        self.file_path = file_path
-        self.filename = os.path.basename(file_path)
-        self.file_size = os.path.getsize(file_path)
-        self.id = str(int(time.time() * 1000))
-        self.status = "pending"
-        self.progress = 0
-        self.video_id = None
-        self.video_url = None
-        self.start_time = None
-        self.end_time = None
-        self.error = None
-        self.cancel_requested = False
-        self.delete_attempts = 0
-        self.delete_success = False
+        """Initialize a new upload task"""
+        try:
+            # Normalize the file path
+            self.file_path = os.path.abspath(os.path.expanduser(file_path))
+            
+            # Extract just the filename (no path)
+            self.filename = os.path.basename(self.file_path)
+            
+            # Get the file size
+            try:
+                self.file_size = os.path.getsize(self.file_path)
+            except Exception as e:
+                logger.error(f"Error getting file size for {self.file_path}: {e}")
+                self.file_size = 0
+                
+            # Generate a unique ID based on timestamp and filename
+            timestamp = int(time.time() * 1000)
+            unique_suffix = hash(self.filename) % 10000  # Add some uniqueness based on filename
+            self.id = f"{timestamp}_{unique_suffix}"
+            
+            # Initialize other attributes
+            self.status = "pending"
+            self.progress = 0
+            self.video_id = None
+            self.video_url = None
+            self.start_time = None
+            self.end_time = None
+            self.error = None
+            self.cancel_requested = False
+            self.delete_attempts = 0
+            self.delete_success = False
+            
+            logger.info(f"Created upload task for {self.filename} with ID {self.id}")
+        except Exception as e:
+            logger.error(f"Error creating upload task: {e}")
+            raise
     
     def to_dict(self):
         """Convert the task to a dictionary for API responses"""
         return {
             'id': self.id,
             'filename': self.filename,
+            'file_path': self.file_path,  # Include full path for debugging
             'file_size': self.file_size,
             'status': self.status,
             'progress': self.progress,
+            'video_id': self.video_id,
             'video_url': self.video_url,
             'error': self.error,
             'start_time': self.start_time,
             'end_time': self.end_time,
-            'delete_success': self.delete_success
+            'delete_success': self.delete_success,
+            'delete_attempts': self.delete_attempts
         }
     
     def mark_uploading(self):
@@ -61,6 +92,7 @@ class UploadTask:
         self.status = "uploading"
         self.progress = 0
         self.start_time = time.time()
+        logger.info(f"Task {self.id} ({self.filename}) marked as uploading")
         
     def mark_completed(self, video_id):
         """Mark task as completed"""
@@ -69,12 +101,15 @@ class UploadTask:
         self.status = "completed"
         self.progress = 100
         self.end_time = time.time()
+        logger.info(f"Task {self.id} ({self.filename}) marked as completed, video ID: {video_id}")
         
     def mark_error(self, error_message):
         """Mark task as error"""
         self.status = "error"
         self.error = error_message
+        logger.error(f"Task {self.id} ({self.filename}) marked as error: {error_message}")
         
     def mark_cancelled(self):
         """Mark task as cancelled"""
         self.status = "cancelled"
+        logger.info(f"Task {self.id} ({self.filename}) marked as cancelled")
