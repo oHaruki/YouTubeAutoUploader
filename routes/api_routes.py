@@ -28,16 +28,28 @@ def settings():
             watch_folder = data['watch_folder']
             
             # Normalize path 
-            # Replace backslashes with forward slashes on Windows
-            if os.name == 'nt':
-                watch_folder = watch_folder.replace('\\', '/')
-            
-            # Expand user directory if it contains a tilde
-            if '~' in watch_folder:
-                watch_folder = os.path.expanduser(watch_folder)
-            
-            # Update the path in the data
-            data['watch_folder'] = watch_folder
+            try:
+                # Replace backslashes with forward slashes on Windows for consistency
+                if os.name == 'nt':  # Windows
+                    watch_folder = watch_folder.replace('\\', '/')
+                
+                # Expand user directory if it contains a tilde
+                if '~' in watch_folder:
+                    watch_folder = os.path.expanduser(watch_folder)
+                
+                # Get absolute path
+                watch_folder = os.path.abspath(watch_folder)
+                
+                print(f"[DEBUG] Normalized watch folder path: {watch_folder}")
+                
+                # Update the path in the data
+                data['watch_folder'] = watch_folder
+            except Exception as e:
+                print(f"[DEBUG] Error normalizing path: {e}")
+                return jsonify({
+                    'success': False,
+                    'error': f'Error processing path: {str(e)}'
+                })
             
             # Verify the folder exists or try to create it
             try:
@@ -290,16 +302,33 @@ def api_verify_folder_path():
             'error': 'No folder path provided'
         })
     
-    # Normalize path
-    if os.name == 'nt':  # Windows
-        folder_path = folder_path.replace('\\', '/')
+    print(f"[DEBUG] Verifying folder path: {folder_path}")
     
-    # Expand user directory if needed
-    if '~' in folder_path:
-        folder_path = os.path.expanduser(folder_path)
+    # Normalize path handling
+    try:
+        # Replace backslashes with forward slashes on Windows for consistency
+        if os.name == 'nt':  # Windows
+            folder_path = folder_path.replace('\\', '/')
+            
+        # Expand user directory if needed
+        if '~' in folder_path:
+            folder_path = os.path.expanduser(folder_path)
+            
+        # Get absolute path
+        folder_path = os.path.abspath(folder_path)
+        
+        print(f"[DEBUG] Normalized path: {folder_path}")
+    except Exception as e:
+        print(f"[DEBUG] Error normalizing path: {e}")
+        return jsonify({
+            'success': False,
+            'error': f'Error processing path: {str(e)}',
+            'folder_path': folder_path
+        })
     
     # Check if folder exists
     if not os.path.exists(folder_path):
+        print(f"[DEBUG] Folder does not exist: {folder_path}")
         return jsonify({
             'success': False,
             'error': f'Folder does not exist: {folder_path}',
@@ -308,6 +337,7 @@ def api_verify_folder_path():
     
     # Check if it's actually a directory
     if not os.path.isdir(folder_path):
+        print(f"[DEBUG] Not a folder: {folder_path}")
         return jsonify({
             'success': False,
             'error': f'Not a folder: {folder_path}',
@@ -316,21 +346,36 @@ def api_verify_folder_path():
     
     # Check if it's readable
     if not os.access(folder_path, os.R_OK):
+        print(f"[DEBUG] Folder not readable: {folder_path}")
         return jsonify({
             'success': False,
             'error': f'Folder is not readable (permission denied): {folder_path}',
             'folder_path': folder_path
         })
     
-    # Check if it's writable (needed for some operations)
-    if not os.access(folder_path, os.W_OK):
-        return jsonify({
-            'success': False,
-            'error': f'Folder is not writable (permission denied): {folder_path}',
-            'folder_path': folder_path,
-            'warning': True
-        })
+    # Check for video files in the folder
+    video_extensions = ['.mp4', '.avi', '.mov', '.wmv', '.mkv', '.flv', '.webm', '.m4v']
+    has_videos = False
     
+    try:
+        for filename in os.listdir(folder_path):
+            if any(filename.lower().endswith(ext) for ext in video_extensions):
+                has_videos = True
+                break
+                
+        if not has_videos:
+            print(f"[DEBUG] No video files found in folder: {folder_path}")
+            return jsonify({
+                'success': True,
+                'warning': True,
+                'message': 'Folder is valid but no video files were found',
+                'folder_path': folder_path
+            })
+    except Exception as e:
+        print(f"[DEBUG] Error checking for video files: {e}")
+        # Continue anyway - this is just an advisory check
+    
+    print(f"[DEBUG] Folder verified successfully: {folder_path}")
     return jsonify({
         'success': True,
         'folder_path': folder_path,
