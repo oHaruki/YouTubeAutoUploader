@@ -4,6 +4,9 @@ YouTube Auto Uploader - Main Application Entry Point
 A tool for automatically uploading videos to YouTube from a watched folder.
 """
 import os
+import sys
+import threading
+import logging
 
 # Enable insecure transport for local development
 os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
@@ -15,7 +18,30 @@ import config
 import youtube_api
 import uploader
 import file_monitor
+import auto_updater
 from routes import register_blueprints
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, 
+                   format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger('app')
+
+def check_for_updates():
+    """Check for updates in a separate thread"""
+    try:
+        if auto_updater.is_auto_update_enabled():
+            logger.info("Checking for updates...")
+            updated, new_version, error_message = auto_updater.run_update()
+            
+            if updated:
+                logger.info(f"Updated to version {new_version}, restarting...")
+                auto_updater.restart_application()
+            elif error_message:
+                logger.info(f"Update check result: {error_message}")
+        else:
+            logger.info("Auto-update is disabled")
+    except Exception as e:
+        logger.error(f"Error during update check: {e}")
 
 def create_app():
     """
@@ -51,8 +77,20 @@ def init_app():
             app_config.get('check_existing_files', True)
         )
 
+def create_version_json():
+    """Create the version.json file if it doesn't exist"""
+    if not os.path.exists('version.json'):
+        auto_updater.get_current_version()
+        logger.info("Created version.json file")
+
 def run_app():
     """Run the Flask application"""
+    # Create version file if needed
+    create_version_json()
+    
+    # Check for updates on startup (in a separate thread)
+    threading.Thread(target=check_for_updates).start()
+    
     # Create and initialize the app
     app = create_app()
     init_app()

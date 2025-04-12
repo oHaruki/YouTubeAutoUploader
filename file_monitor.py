@@ -21,6 +21,9 @@ current_watch_folder = None
 # Will be set by the uploader module
 on_new_file_callback = None
 
+# Track files we've already seen to avoid duplicate processing
+processed_files = set()
+
 class VideoEventHandler(FileSystemEventHandler):
     """
     Watchdog handler for detecting new video files
@@ -35,21 +38,124 @@ class VideoEventHandler(FileSystemEventHandler):
             if is_video_file(file_path):
                 logger.info(f"Video file detected: {file_path}")
                 
-                # Wait a short time to ensure the file is completely written
-                # This helps avoid incomplete file uploads
-                time.sleep(3)
+                # Check if this file has already been processed
+                if file_path in processed_files:
+                    logger.info(f"File already processed, skipping: {file_path}")
+                    return
                 
-                # Call the callback function with the detected file
-                if on_new_file_callback:
-                    logger.info(f"Processing video file: {file_path}")
-                    try:
-                        on_new_file_callback(file_path)
-                    except Exception as e:
-                        logger.error(f"Error in callback for file {file_path}: {e}")
+                # Wait for the file to stabilize (no more writes)
+                if wait_for_file_stability(file_path):
+                    # Mark as processed to avoid duplicate processing
+                    processed_files.add(file_path)
+                    
+                    # Call the callback function with the detected file
+                    if on_new_file_callback:
+                        logger.info(f"Processing stable video file: {file_path}")
+                        try:
+                            on_new_file_callback(file_path)
+                        except Exception as e:
+                            logger.error(f"Error in callback for file {file_path}: {e}")
+                    else:
+                        logger.error("No callback function registered for file processing")
                 else:
-                    logger.error("No callback function registered for file processing")
+                    logger.warning(f"File did not stabilize within timeout period: {file_path}")
             else:
                 logger.info(f"Non-video file ignored: {file_path}")
+
+def wait_for_file_stability(file_path, check_interval=1, max_wait_time=30, size_change_threshold=0):
+    """
+    Wait for a file to stop changing size, indicating it's no longer being written
+    
+    Args:
+        file_path (str): Path to the file
+        check_interval (int): Number of seconds between size checks
+        max_wait_time (int): Maximum time to wait in seconds
+        size_change_threshold (int): Allow this many bytes of change between checks
+        
+    Returns:
+        bool: True if file stabilized, False if timed out or file disappeared
+    """
+    logger.info(f"Waiting for file to stabilize: {file_path}")
+    
+    try:
+        # First, make sure the file exists
+        if not os.path.exists(file_path):
+            logger.warning(f"File does not exist: {file_path}")
+            return False
+        
+        # Initial size check
+        try:
+            initial_size = os.path.getsize(file_path)
+            last_size = initial_size
+            logger.info(f"Initial file size: {initial_size} bytes")
+        except Exception as e:
+            logger.error(f"Error getting initial file size: {e}")
+            return False
+        
+        # If file is empty, wait a moment and check again
+        if initial_size == 0:
+            logger.warning(f"File is empty, waiting briefly: {file_path}")
+            time.sleep(3)
+            
+            if not os.path.exists(file_path):
+                return False
+                
+            try:
+                initial_size = os.path.getsize(file_path)
+                last_size = initial_size
+                
+                if initial_size == 0:
+                    logger.warning(f"File is still empty after waiting: {file_path}")
+                    return False
+                    
+                logger.info(f"File now has size: {initial_size} bytes")
+            except Exception as e:
+                logger.error(f"Error getting file size after wait: {e}")
+                return False
+                
+        # Start waiting for stability
+        start_time = time.time()
+        stable = False
+        
+        while (time.time() - start_time) < max_wait_time:
+            # Wait for check interval
+            time.sleep(check_interval)
+            
+            # Check if file still exists
+            if not os.path.exists(file_path):
+                logger.warning(f"File no longer exists: {file_path}")
+                return False
+            
+            # Check current size
+            try:
+                current_size = os.path.getsize(file_path)
+                logger.debug(f"Current file size: {current_size} bytes (change: {current_size - last_size} bytes)")
+                
+                # Check if size is stable
+                if abs(current_size - last_size) <= size_change_threshold:
+                    logger.info(f"File size has stabilized at {current_size} bytes")
+                    stable = True
+                    break
+                    
+                # Update last size for next check
+                last_size = current_size
+            except Exception as e:
+                logger.error(f"Error checking file size: {e}")
+                return False
+        
+        if not stable:
+            logger.warning(f"Timed out waiting for file to stabilize: {file_path}")
+            
+        # If the file has at least some content, consider it stable enough
+        if last_size > 0:
+            logger.info(f"File has content ({last_size} bytes), considering it stable enough")
+            return True
+            
+        return stable
+        
+    except Exception as e:
+        logger.error(f"Error waiting for file stability: {e}")
+        return False
 
 def is_video_file(file_path):
     """
@@ -103,7 +209,7 @@ def start_monitoring(watch_folder, check_existing=True):
     Returns:
         bool: True if monitoring started successfully, False otherwise
     """
-    global observer, is_monitoring, current_watch_folder
+    global observer, is_monitoring, current_watch_folder, processed_files
     
     if is_monitoring:
         logger.warning(f"Already monitoring a folder: {current_watch_folder}")
@@ -134,6 +240,9 @@ def start_monitoring(watch_folder, check_existing=True):
         return False
     
     logger.info(f"Starting monitoring for folder: {watch_folder}")
+    
+    # Reset the processed files when starting new monitoring
+    processed_files = set()
         
     try:
         # Set up watchdog observer
@@ -162,15 +271,19 @@ def start_monitoring(watch_folder, check_existing=True):
                     logger.info(f"Checking file: {file_path}")
                     
                     if os.path.isfile(file_path):
-                        if is_video_file(file_path):
-                            video_count += 1
-                            logger.info(f"Found existing video file: {file_path}")
-                            try:
-                                on_new_file_callback(file_path)
-                            except Exception as e:
-                                logger.error(f"Error processing existing file {file_path}: {e}")
+                        if is_video_file(file_path) and file_path not in processed_files:
+                            if wait_for_file_stability(file_path):
+                                video_count += 1
+                                logger.info(f"Found existing stable video file: {file_path}")
+                                processed_files.add(file_path)
+                                try:
+                                    on_new_file_callback(file_path)
+                                except Exception as e:
+                                    logger.error(f"Error processing existing file {file_path}: {e}")
+                            else:
+                                logger.warning(f"Skipping unstable video file: {file_path}")
                 
-                logger.info(f"Scanned {file_count} files, found {video_count} videos")
+                logger.info(f"Scanned {file_count} files, found {video_count} stable videos")
             except Exception as e:
                 logger.error(f"Error scanning existing files: {e}")
         

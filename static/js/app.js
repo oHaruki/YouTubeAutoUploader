@@ -7,6 +7,7 @@ let uploadLimitReached = false;
 let uploadLimitResetTime = null;
 let currentTheme = "light";
 let refreshInterval;
+let processedTaskIds = new Set(); // Track which tasks we've already displayed
 
 // DOM Ready
 document.addEventListener('DOMContentLoaded', function() {
@@ -146,6 +147,8 @@ function updateQueueUI() {
     if (uploadQueue.length === 0) {
         emptyMessage.classList.remove('d-none');
         statsElement.classList.add('d-none');
+        // Reset processed task IDs when queue is empty
+        processedTaskIds.clear();
         return;
     }
     
@@ -164,8 +167,13 @@ function updateQueueUI() {
     // Add upload items
     uploadQueue.forEach(task => {
         const itemEl = document.createElement('div');
-        itemEl.className = 'upload-item p-3 mb-3 fade-in';
+        // Only apply fade-in animation to new items
+        const isNewTask = !processedTaskIds.has(task.id);
+        itemEl.className = `upload-item p-3 mb-3 ${isNewTask ? 'fade-in' : ''}`;
         itemEl.id = `task-${task.id}`;
+        
+        // Add this task ID to our processed set
+        processedTaskIds.add(task.id);
         
         let statusClass = '';
         let statusIcon = '';
@@ -825,3 +833,180 @@ function uploadApiProject() {
         showToast('Error', 'Error uploading API project', 'danger');
     });
 }
+
+// Add this to the bottom of static/js/app.js
+
+// Updates functionality
+function checkForUpdates() {
+    console.log("Checking for updates");
+    
+    const loadingEl = document.getElementById('updateStatusLoading');
+    const contentEl = document.getElementById('updateStatusContent');
+    const upToDateEl = document.getElementById('upToDateMessage');
+    const updateAvailableEl = document.getElementById('updateAvailableMessage');
+    const updateErrorEl = document.getElementById('updateErrorMessage');
+    
+    // Show loading, hide others
+    loadingEl.classList.remove('d-none');
+    contentEl.classList.add('d-none');
+    upToDateEl.classList.add('d-none');
+    updateAvailableEl.classList.add('d-none');
+    updateErrorEl.classList.add('d-none');
+    
+    // Check for updates
+    fetch('/api/updates/check')
+        .then(response => response.json())
+        .then(data => {
+            loadingEl.classList.add('d-none');
+            contentEl.classList.remove('d-none');
+            
+            if (data.success) {
+                // Update version info
+                document.getElementById('currentVersionText').textContent = data.current_version;
+                
+                // Set auto-update toggle state
+                document.getElementById('autoUpdateToggle').checked = data.auto_update_enabled;
+                
+                if (data.update_available) {
+                    // Show update available message
+                    document.getElementById('latestVersionText').textContent = data.latest_version;
+                    document.getElementById('releaseNotes').textContent = data.release_notes || "No release notes available.";
+                    updateAvailableEl.classList.remove('d-none');
+                } else {
+                    // Show up to date message
+                    upToDateEl.classList.remove('d-none');
+                }
+            } else {
+                // Show error
+                document.getElementById('updateErrorText').textContent = data.error || "Unable to check for updates.";
+                updateErrorEl.classList.remove('d-none');
+            }
+        })
+        .catch(error => {
+            console.error('Error checking for updates:', error);
+            loadingEl.classList.add('d-none');
+            contentEl.classList.remove('d-none');
+            document.getElementById('updateErrorText').textContent = "Connection error. Please try again.";
+            updateErrorEl.classList.remove('d-none');
+        });
+}
+
+function applyUpdate() {
+    console.log("Applying update");
+    
+    // Show loading
+    const updateNowBtn = document.getElementById('updateNowBtn');
+    const originalBtnText = updateNowBtn.innerHTML;
+    updateNowBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span> Updating...';
+    updateNowBtn.disabled = true;
+    
+    // Apply update
+    fetch('/api/updates/apply', {
+        method: 'POST'
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            // Show restart needed message
+            showToast('Success', 'Update installed successfully! Restarting application...', 'success');
+            
+            // Restart the application
+            setTimeout(() => {
+                restartApplication();
+            }, 3000);
+        } else {
+            // Show error
+            updateNowBtn.innerHTML = originalBtnText;
+            updateNowBtn.disabled = false;
+            showToast('Error', 'Update failed: ' + (data.error || "Unknown error"), 'danger');
+        }
+    })
+    .catch(error => {
+        console.error('Error applying update:', error);
+        updateNowBtn.innerHTML = originalBtnText;
+        updateNowBtn.disabled = false;
+        showToast('Error', 'Connection error while updating', 'danger');
+    });
+}
+
+function toggleAutoUpdate() {
+    const enabled = document.getElementById('autoUpdateToggle').checked;
+    console.log(`Setting auto-update to: ${enabled}`);
+    
+    fetch('/api/updates/settings', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            auto_update_enabled: enabled
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            showToast('Success', `Auto-update ${enabled ? 'enabled' : 'disabled'}`, 'success');
+        } else {
+            showToast('Error', 'Failed to update settings: ' + (data.error || "Unknown error"), 'danger');
+            // Revert the toggle if setting failed
+            document.getElementById('autoUpdateToggle').checked = !enabled;
+        }
+    })
+    .catch(error => {
+        console.error('Error updating auto-update setting:', error);
+        showToast('Error', 'Error updating setting', 'danger');
+        // Revert the toggle on error
+        document.getElementById('autoUpdateToggle').checked = !enabled;
+    });
+}
+
+function restartApplication() {
+    fetch('/api/updates/restart', {
+        method: 'POST'
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            // Show restarting message
+            document.body.innerHTML = `
+                <div class="container text-center" style="margin-top: 100px;">
+                    <h2>Restarting Application</h2>
+                    <div class="spinner-border text-primary mt-4" role="status" style="width: 4rem; height: 4rem;">
+                        <span class="visually-hidden">Restarting...</span>
+                    </div>
+                    <p class="lead mt-4">Please wait while the application restarts...</p>
+                    <p>The page will reload automatically. If it doesn't, <a href="/" class="btn btn-link">click here</a>.</p>
+                </div>
+            `;
+            
+            // Try to reload the page after a delay
+            setTimeout(() => {
+                window.location.reload();
+            }, 5000);
+        }
+    })
+    .catch(error => {
+        console.error('Error restarting application:', error);
+        showToast('Error', 'Error restarting application', 'danger');
+    });
+}
+
+// Load updates when the About tab is shown
+document.getElementById('about-tab').addEventListener('shown.bs.tab', function (e) {
+    checkForUpdates();
+});
+
+// Set up event listeners for update functionality
+document.addEventListener('DOMContentLoaded', function() {
+    // Auto-update toggle
+    document.getElementById('autoUpdateToggle').addEventListener('change', toggleAutoUpdate);
+    
+    // Update now button
+    document.getElementById('updateNowBtn')?.addEventListener('click', applyUpdate);
+    
+    // Manual check button
+    document.getElementById('manualCheckUpdateBtn')?.addEventListener('click', checkForUpdates);
+    
+    // Retry button
+    document.getElementById('retryUpdateBtn')?.addEventListener('click', checkForUpdates);
+});

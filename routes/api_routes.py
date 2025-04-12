@@ -593,6 +593,108 @@ def api_select_project():
             'needs_auth': True,
             'project_id': project_id
         })
+    
+@api_bp.route('/updates/check', methods=['GET'])
+def check_for_updates():
+    """Check for available updates"""
+    import auto_updater
+    
+    try:
+        update_available, latest_version, download_url, release_notes = auto_updater.check_for_update()
+        current_version = auto_updater.get_current_version()
+        
+        return jsonify({
+            'success': True,
+            'update_available': update_available,
+            'current_version': current_version,
+            'latest_version': latest_version,
+            'release_notes': release_notes,
+            'auto_update_enabled': auto_updater.is_auto_update_enabled()
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        })
+
+@api_bp.route('/updates/apply', methods=['POST'])
+def apply_update():
+    """Download and apply available update"""
+    import auto_updater
+    
+    try:
+        update_available, latest_version, download_url, release_notes = auto_updater.check_for_update()
+        
+        if not update_available:
+            return jsonify({
+                'success': False,
+                'error': 'No updates available'
+            })
+        
+        zip_path = auto_updater.download_update(download_url)
+        if not zip_path:
+            return jsonify({
+                'success': False,
+                'error': 'Failed to download update'
+            })
+        
+        success = auto_updater.apply_update(zip_path, latest_version)
+        if not success:
+            return jsonify({
+                'success': False,
+                'error': 'Failed to apply update'
+            })
+        
+        return jsonify({
+            'success': True,
+            'message': f'Updated to version {latest_version}',
+            'require_restart': True
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        })
+
+@api_bp.route('/updates/settings', methods=['POST'])
+def update_settings():
+    """Update auto-update settings"""
+    import auto_updater
+    
+    try:
+        data = request.json
+        enabled = data.get('auto_update_enabled', True)
+        
+        auto_updater.set_auto_update_enabled(enabled)
+        
+        return jsonify({
+            'success': True,
+            'auto_update_enabled': enabled
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        })
+
+@api_bp.route('/updates/restart', methods=['POST'])
+def restart_app():
+    """Restart the application"""
+    import auto_updater
+    import threading
+    
+    def delayed_restart():
+        # Wait a moment for the response to be sent
+        time.sleep(1)
+        auto_updater.restart_application()
+    
+    # Start restart in a separate thread
+    threading.Thread(target=delayed_restart).start()
+    
+    return jsonify({
+        'success': True,
+        'message': 'Restarting application...'
+    })    
 
 @api_bp.route('/projects/add', methods=['POST'])
 def api_add_project():
