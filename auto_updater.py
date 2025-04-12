@@ -12,7 +12,7 @@ import shutil
 import zipfile
 import subprocess
 import requests
-from packaging import version
+import traceback
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, 
@@ -22,6 +22,8 @@ logger = logging.getLogger('auto_updater')
 # GitHub repository information
 GITHUB_REPO = "oHaruki/YouTubeAutoUploader"
 GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
+# Fallback URL if no asset is available
+GITHUB_ZIPBALL_URL = f"https://api.github.com/repos/{GITHUB_REPO}/zipball/latest"
 VERSION_FILE = "version.json"
 
 # Files and directories to exclude during update
@@ -122,6 +124,43 @@ def set_auto_update_enabled(enabled=True):
     except Exception as e:
         logger.error(f"Error updating version file: {e}")
 
+def version_is_newer(latest, current):
+    """
+    Compare version strings directly
+    
+    Args:
+        latest (str): Latest version string
+        current (str): Current version string
+        
+    Returns:
+        bool: True if latest is newer than current
+    """
+    try:
+        # Convert to list of integers for comparison
+        latest_parts = [int(x) for x in latest.split('.')]
+        current_parts = [int(x) for x in current.split('.')]
+        
+        # Pad with zeros if needed
+        while len(latest_parts) < 3:
+            latest_parts.append(0)
+        while len(current_parts) < 3:
+            current_parts.append(0)
+        
+        # Compare major, minor, patch
+        for l, c in zip(latest_parts, current_parts):
+            if l > c:
+                return True
+            elif l < c:
+                return False
+        
+        # If we get here, versions are equal
+        return False
+    except Exception as e:
+        logger.error(f"Error comparing versions: {e}")
+        logger.error(traceback.format_exc())
+        # Fallback to string comparison as last resort
+        return latest.strip() > current.strip()
+
 def check_for_update():
     """
     Check if a newer version is available on GitHub
@@ -133,31 +172,77 @@ def check_for_update():
     
     try:
         logger.info(f"Checking for updates (current version: {current_version})")
+        
+        # Make request to GitHub API
+        logger.info(f"Requesting: {GITHUB_API_URL}")
         response = requests.get(GITHUB_API_URL, timeout=10)
+        logger.info(f"Response status: {response.status_code}")
         response.raise_for_status()
         
+        # Parse the GitHub response
         release_data = response.json()
-        latest_version = release_data.get("tag_name", "").lstrip('v')
-        download_url = None
+        
+        # Get the tag name (version) from the release
+        tag_name = release_data.get("tag_name", "")
+        logger.info(f"Release tag name: {tag_name}")
+        
+        # Remove 'v' prefix if present
+        latest_version = tag_name.lstrip('v')
+        logger.info(f"Latest GitHub version: {latest_version}")
         
         # Find the ZIP asset
-        for asset in release_data.get("assets", []):
-            if asset.get("name", "").endswith(".zip"):
+        download_url = None
+        assets = release_data.get("assets", [])
+        logger.info(f"Found {len(assets)} assets in the release")
+        
+        for asset in assets:
+            asset_name = asset.get("name", "")
+            logger.info(f"Found asset: {asset_name}")
+            if asset_name.endswith(".zip"):
                 download_url = asset.get("browser_download_url")
+                logger.info(f"Found ZIP asset URL: {download_url}")
                 break
         
+        # If no ZIP asset found, use the source code ZIP
+        if not download_url:
+            logger.info("No ZIP asset found, using source code ZIP fallback")
+            download_url = release_data.get("zipball_url")
+            logger.info(f"Using zipball URL: {download_url}")
+        
+        # If still no download URL, use the repository zipball as last resort
+        if not download_url:
+            logger.info("No zipball URL found, using repository zipball as last resort")
+            download_url = GITHUB_ZIPBALL_URL
+        
+        # Get release notes
         release_notes = release_data.get("body", "No release notes available.")
         
         # Compare versions
-        if latest_version and download_url and version.parse(latest_version) > version.parse(current_version):
-            logger.info(f"New version available: {latest_version}")
-            return (True, latest_version, download_url, release_notes)
+        if latest_version and download_url:
+            is_newer = version_is_newer(latest_version, current_version)
+            logger.info(f"Version comparison result: {is_newer} (latest={latest_version}, current={current_version})")
+            
+            # For debugging
+            print(f"DEBUG: Version comparison: {latest_version} > {current_version} = {is_newer}")
+            
+            if is_newer:
+                logger.info(f"New version available: {latest_version}")
+                return (True, latest_version, download_url, release_notes)
+            else:
+                logger.info("Current version is up to date")
         else:
-            logger.info("No updates available")
-            return (False, latest_version, None, None)
+            if not latest_version:
+                logger.warning("Could not determine latest version from GitHub")
+            if not download_url:
+                logger.warning("No download URL found for update")
+        
+        # If we get here, no update is available or needed
+        logger.info("No updates available")
+        return (False, latest_version, None, None)
             
     except Exception as e:
         logger.error(f"Error checking for updates: {e}")
+        logger.error(traceback.format_exc())
         return (False, None, None, None)
 
 def download_update(download_url):
@@ -188,6 +273,7 @@ def download_update(download_url):
         return zip_path
     except Exception as e:
         logger.error(f"Error downloading update: {e}")
+        logger.error(traceback.format_exc())
         return None
 
 def apply_update(zip_path, latest_version):
@@ -207,6 +293,13 @@ def apply_update(zip_path, latest_version):
         temp_dir = os.path.join(tempfile.gettempdir(), "youtube_auto_uploader_update")
         current_dir = os.path.dirname(os.path.abspath(__file__))
         
+        # For the main script, use the current working directory
+        if not current_dir:
+            current_dir = os.getcwd()
+        
+        logger.info(f"Current directory: {current_dir}")
+        logger.info(f"Temp directory: {temp_dir}")
+        
         # Clear previous temp directory if it exists
         if os.path.exists(temp_dir):
             shutil.rmtree(temp_dir)
@@ -218,11 +311,17 @@ def apply_update(zip_path, latest_version):
             zip_ref.extractall(temp_dir)
         
         # Find the root directory in the extracted files
-        extracted_dirs = [d for d in os.listdir(temp_dir) if os.path.isdir(os.path.join(temp_dir, d))]
-        if extracted_dirs:
-            extract_root = os.path.join(temp_dir, extracted_dirs[0])
-        else:
-            extract_root = temp_dir
+        extracted_items = os.listdir(temp_dir)
+        logger.info(f"Extracted items: {extracted_items}")
+        
+        # Handle GitHub's zipball format which includes a directory with the repo name
+        extract_root = temp_dir
+        for item in extracted_items:
+            full_path = os.path.join(temp_dir, item)
+            if os.path.isdir(full_path) and (GITHUB_REPO.split("/")[0] in item or "YouTubeAutoUploader" in item):
+                extract_root = full_path
+                logger.info(f"Found GitHub repo directory: {extract_root}")
+                break
         
         # Copy the update files to the current directory
         for item in os.listdir(extract_root):
@@ -279,6 +378,7 @@ def apply_update(zip_path, latest_version):
         return True
     except Exception as e:
         logger.error(f"Error applying update: {e}")
+        logger.error(traceback.format_exc())
         return False
 
 def update_version_file(new_version):
@@ -301,6 +401,16 @@ def update_version_file(new_version):
     except Exception as e:
         logger.error(f"Error updating version file: {e}")
 
+def force_update_to_version(version):
+    """
+    Force update to a specific version for testing
+    
+    Args:
+        version (str): Version to update to
+    """
+    logger.info(f"Forcing update to version {version}")
+    update_version_file(version)
+    
 def run_update():
     """
     Run the update process
@@ -329,6 +439,7 @@ def run_update():
         return (True, latest_version, None)
     except Exception as e:
         logger.error(f"Update process error: {e}")
+        logger.error(traceback.format_exc())
         return (False, None, str(e))
 
 def restart_application():
@@ -354,13 +465,18 @@ if __name__ == "__main__":
     print(f"Current version: {get_current_version()}")
     print(f"Auto-update enabled: {is_auto_update_enabled()}")
     
+    # Force downgrade to 1.0.0 for testing if needed
+    if len(sys.argv) > 1 and sys.argv[1] == "--downgrade":
+        force_update_to_version("1.0.0")
+        print("Forced downgrade to version 1.0.0 for testing")
+    
     update_available, latest_version, download_url, release_notes = check_for_update()
     print(f"Update available: {update_available}")
+    print(f"Latest version from GitHub: {latest_version}")
+    print(f"Download URL: {download_url}")
+    print(f"Release notes: {release_notes}")
+    
     if update_available:
-        print(f"Latest version: {latest_version}")
-        print(f"Download URL: {download_url}")
-        print(f"Release notes: {release_notes}")
-        
         if input("Download and apply update? (y/n): ").lower() == 'y':
             zip_path = download_update(download_url)
             if zip_path:
