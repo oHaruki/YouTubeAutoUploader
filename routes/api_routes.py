@@ -694,7 +694,38 @@ def restart_app():
     return jsonify({
         'success': True,
         'message': 'Restarting application...'
-    })    
+    })
+
+@api_bp.route('/monitor/scan', methods=['POST'])
+def api_manual_scan():
+    """Manually trigger a scan of the monitored folder"""
+    import file_monitor
+    
+    if not file_monitor.get_monitoring_status():
+        return jsonify({
+            'success': False,
+            'error': 'Not currently monitoring any folder'
+        })
+    
+    try:
+        scan_count = file_monitor.manual_scan()
+        
+        if scan_count >= 0:
+            return jsonify({
+                'success': True,
+                'videos_found': scan_count,
+                'folder': file_monitor.get_current_watch_folder()
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'Error scanning folder'
+            })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': f'Error during scan: {str(e)}'
+        })    
 
 @api_bp.route('/projects/add', methods=['POST'])
 def api_add_project():

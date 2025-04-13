@@ -34,6 +34,7 @@ document.addEventListener('DOMContentLoaded', function() {
     // Setup event listeners
     document.getElementById('startMonitoringBtn').addEventListener('click', startMonitoring);
     document.getElementById('stopMonitoringBtn').addEventListener('click', stopMonitoring);
+    document.getElementById('scanNowBtn').addEventListener('click', manualScan); // New scan button
     document.getElementById('clearCompletedBtn').addEventListener('click', clearCompletedUploads);
     document.getElementById('saveSettingsBtn').addEventListener('click', saveSettings);
     document.getElementById('themeToggleBtn').addEventListener('click', toggleTheme);
@@ -99,6 +100,44 @@ function toggleTheme() {
         }
     })
     .catch(error => console.error('Error setting theme:', error));
+}
+
+// Manual scan functionality
+function manualScan() {
+    console.log("Manually scanning for videos");
+    
+    // Show loading indicator
+    const scanBtn = document.getElementById('scanNowBtn');
+    const originalText = scanBtn.innerHTML;
+    scanBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span> Scanning...';
+    scanBtn.disabled = true;
+    
+    fetch('/api/monitor/scan', {
+        method: 'POST'
+    })
+    .then(response => response.json())
+    .then(data => {
+        scanBtn.innerHTML = originalText;
+        scanBtn.disabled = !isMonitoring;
+        
+        if (data.success) {
+            console.log(`Scan complete: ${data.videos_found} videos found`);
+            showToast('Scan Complete', `Found ${data.videos_found} video${data.videos_found !== 1 ? 's' : ''}`, 'success');
+            
+            // Force immediate queue refresh
+            refreshQueue();
+        } else {
+            console.error(`Failed to scan: ${data.error}`);
+            showToast('Error', 'Failed to scan folder: ' + (data.error || 'Unknown error'), 'danger');
+        }
+    })
+    .catch(error => {
+        scanBtn.innerHTML = originalText;
+        scanBtn.disabled = !isMonitoring;
+        
+        console.error('Error during manual scan:', error);
+        showToast('Error', 'Error during scan. Check console for details.', 'danger');
+    });
 }
 
 // Queue management
@@ -345,7 +384,7 @@ function startMonitoring() {
             // Force immediate queue refresh
             refreshQueue();
             
-            showToast('Success', 'Started monitoring folder for videos', 'success');
+            showToast('Success', 'Started monitoring folder - use "Scan Now" to scan for videos', 'success');
         } else {
             console.error(`Failed to start monitoring: ${data.error}`);
             startBtn.disabled = false;
@@ -403,13 +442,16 @@ function stopMonitoring() {
 function updateMonitoringButtons() {
     const startBtn = document.getElementById('startMonitoringBtn');
     const stopBtn = document.getElementById('stopMonitoringBtn');
+    const scanBtn = document.getElementById('scanNowBtn');
     
     if (isMonitoring) {
         startBtn.disabled = true;
         stopBtn.disabled = false;
+        scanBtn.disabled = false;
     } else {
         startBtn.disabled = !isAuthenticated;
         stopBtn.disabled = true;
+        scanBtn.disabled = true;
     }
     
     updateStatusIndicator();
@@ -834,8 +876,6 @@ function uploadApiProject() {
     });
 }
 
-// Add this to the bottom of static/js/app.js
-
 // Updates functionality
 function checkForUpdates() {
     console.log("Checking for updates");
@@ -992,21 +1032,31 @@ function restartApplication() {
 }
 
 // Load updates when the About tab is shown
-document.getElementById('about-tab').addEventListener('shown.bs.tab', function (e) {
-    checkForUpdates();
-});
-
-// Set up event listeners for update functionality
 document.addEventListener('DOMContentLoaded', function() {
     // Auto-update toggle
-    document.getElementById('autoUpdateToggle').addEventListener('change', toggleAutoUpdate);
+    if (document.getElementById('autoUpdateToggle')) {
+        document.getElementById('autoUpdateToggle').addEventListener('change', toggleAutoUpdate);
+    }
     
     // Update now button
-    document.getElementById('updateNowBtn')?.addEventListener('click', applyUpdate);
+    if (document.getElementById('updateNowBtn')) {
+        document.getElementById('updateNowBtn').addEventListener('click', applyUpdate);
+    }
     
     // Manual check button
-    document.getElementById('manualCheckUpdateBtn')?.addEventListener('click', checkForUpdates);
+    if (document.getElementById('manualCheckUpdateBtn')) {
+        document.getElementById('manualCheckUpdateBtn').addEventListener('click', checkForUpdates);
+    }
     
     // Retry button
-    document.getElementById('retryUpdateBtn')?.addEventListener('click', checkForUpdates);
+    if (document.getElementById('retryUpdateBtn')) {
+        document.getElementById('retryUpdateBtn').addEventListener('click', checkForUpdates);
+    }
+    
+    // Load updates when the About tab is shown
+    if (document.getElementById('about-tab')) {
+        document.getElementById('about-tab').addEventListener('shown.bs.tab', function (e) {
+            checkForUpdates();
+        });
+    }
 });

@@ -91,62 +91,65 @@
                 </ul>
 
                 <div class="tab-content" id="mainTabsContent">
-                    <!-- Uploads Tab -->
-                    <div class="tab-pane fade show active" id="uploads-tab-pane" role="tabpanel" aria-labelledby="uploads-tab" tabindex="0">
-                        <div class="card fade-in">
-                            <div class="card-header d-flex justify-content-between align-items-center">
-                                <span><i class="bi bi-folder me-2"></i>Folder to Monitor</span>
-                            </div>
-                            <div class="card-body">
-                                <div class="alert alert-info mb-3">
-                                    <i class="bi bi-info-circle me-2"></i>
-                                    Enter the full path to the folder you want to monitor for video files. Videos placed in this folder will be automatically uploaded to YouTube.
-                                </div>
-                                
-                                <div class="input-group mb-3">
-                                    <input type="text" class="form-control" id="watchFolderPath" value="{{ config.watch_folder }}" placeholder="Enter the complete folder path (e.g., C:\Users\YourName\Videos\Folder)">
-                                    <button class="btn btn-success" type="button" id="saveFolderBtn">
-                                        <i class="bi bi-save me-1"></i> Save
-                                    </button>
-                                </div>
+<!-- Uploads Tab -->
+<div class="tab-pane fade show active" id="uploads-tab-pane" role="tabpanel" aria-labelledby="uploads-tab" tabindex="0">
+    <div class="card fade-in">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <span><i class="bi bi-folder me-2"></i>Folder to Monitor</span>
+        </div>
+        <div class="card-body">
+            <div class="alert alert-info mb-3">
+                <i class="bi bi-info-circle me-2"></i>
+                Enter the full path to the folder you want to monitor for video files. Videos placed in this folder will be scanned when you click "Scan Now".
+            </div>
+            
+            <div class="input-group mb-3">
+                <input type="text" class="form-control" id="watchFolderPath" value="{{ config.watch_folder }}" placeholder="Enter the complete folder path (e.g., C:\Users\YourName\Videos\Folder)">
+                <button class="btn btn-success" type="button" id="saveFolderBtn">
+                    <i class="bi bi-save me-1"></i> Save
+                </button>
+            </div>
 
-                                <!-- Folder path status notification -->
-                                <div id="folderStatus" class="mb-3 d-none">
-                                    <!-- Folder validation status will appear here -->
-                                </div>
-                                
-                                <div class="d-flex justify-content-center mt-4">
-                                    <button id="startMonitoringBtn" class="btn btn-success me-3" {% if not is_authenticated or is_monitoring %}disabled{% endif %}>
-                                        <i class="bi bi-play-fill me-1"></i> Start Monitoring
-                                    </button>
-                                    <button id="stopMonitoringBtn" class="btn btn-danger" {% if not is_authenticated or not is_monitoring %}disabled{% endif %}>
-                                        <i class="bi bi-stop-fill me-1"></i> Stop Monitoring
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
+            <!-- Folder path status notification -->
+            <div id="folderStatus" class="mb-3 d-none">
+                <!-- Folder validation status will appear here -->
+            </div>
+            
+            <div class="d-flex justify-content-center mt-4">
+                <button id="startMonitoringBtn" class="btn btn-success me-3" {% if not is_authenticated or is_monitoring %}disabled{% endif %}>
+                    <i class="bi bi-play-fill me-1"></i> Start Monitoring
+                </button>
+                <button id="scanNowBtn" class="btn btn-primary me-3" {% if not is_authenticated or not is_monitoring %}disabled{% endif %}>
+                    <i class="bi bi-search me-1"></i> Scan Now
+                </button>
+                <button id="stopMonitoringBtn" class="btn btn-danger" {% if not is_authenticated or not is_monitoring %}disabled{% endif %}>
+                    <i class="bi bi-stop-fill me-1"></i> Stop Monitoring
+                </button>
+            </div>
+        </div>
+    </div>
 
-                        <div class="card fade-in">
-                            <div class="card-header d-flex justify-content-between align-items-center">
-                                <span><i class="bi bi-list-ul me-2"></i>Upload Queue</span>
-                                <button id="clearCompletedBtn" class="btn btn-sm btn-outline-light">
-                                    <i class="bi bi-trash me-1"></i> Clear Completed
-                                </button>
-                            </div>
-                            <div class="card-body">
-                                <div id="uploadQueueContainer" class="mb-3">
-                                    <div class="text-center text-muted py-4" id="emptyQueueMessage">
-                                        <i class="bi bi-inbox fs-3 d-block mb-2"></i>
-                                        No uploads in queue
-                                    </div>
-                                    <div id="uploadItems"></div>
-                                </div>
-                                <div id="queueStats" class="text-end text-muted small d-none">
-                                    <span id="statsText">Uploads: 0 completed, 0 pending, 0 uploading, 0 failed</span>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
+    <div class="card fade-in">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <span><i class="bi bi-list-ul me-2"></i>Upload Queue</span>
+            <button id="clearCompletedBtn" class="btn btn-sm btn-outline-light">
+                <i class="bi bi-trash me-1"></i> Clear Completed
+            </button>
+        </div>
+        <div class="card-body">
+            <div id="uploadQueueContainer" class="mb-3">
+                <div class="text-center text-muted py-4" id="emptyQueueMessage">
+                    <i class="bi bi-inbox fs-3 d-block mb-2"></i>
+                    No uploads in queue
+                </div>
+                <div id="uploadItems"></div>
+            </div>
+            <div id="queueStats" class="text-end text-muted small d-none">
+                <span id="statsText">Uploads: 0 completed, 0 pending, 0 uploading, 0 failed</span>
+            </div>
+        </div>
+    </div>
+</div>
 
                     <!-- Settings Tab -->
                     <div class="tab-pane fade" id="settings-tab-pane" role="tabpanel" aria-labelledby="settings-tab" tabindex="0">

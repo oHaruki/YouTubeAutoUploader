@@ -1,66 +1,25 @@
 """
-File system monitoring functionality for YouTube Auto Uploader - Debug Version
+File system monitoring functionality for YouTube Auto Uploader - Single Scan Version
 """
 import os
 import time
 import logging
-from watchdog.observers import Observer
-from watchdog.events import FileSystemEventHandler
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, 
                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger('file_monitor')
 
-# Record of active monitoring state and observer instance
+# Record of active monitoring state
 is_monitoring = False
-observer = None
 current_watch_folder = None
 
-# Function to be called when a new file is detected
+# Function to be called when a video file is found
 # Will be set by the uploader module
 on_new_file_callback = None
 
 # Track files we've already seen to avoid duplicate processing
 processed_files = set()
-
-class VideoEventHandler(FileSystemEventHandler):
-    """
-    Watchdog handler for detecting new video files
-    """
-    def on_created(self, event):
-        logger.info(f"File system event: {event.event_type} - {event.src_path}")
-        
-        if not event.is_directory:
-            file_path = event.src_path
-            logger.info(f"File created: {file_path}")
-            
-            if is_video_file(file_path):
-                logger.info(f"Video file detected: {file_path}")
-                
-                # Check if this file has already been processed
-                if file_path in processed_files:
-                    logger.info(f"File already processed, skipping: {file_path}")
-                    return
-                
-                # Wait for the file to stabilize (no more writes)
-                if wait_for_file_stability(file_path):
-                    # Mark as processed to avoid duplicate processing
-                    processed_files.add(file_path)
-                    
-                    # Call the callback function with the detected file
-                    if on_new_file_callback:
-                        logger.info(f"Processing stable video file: {file_path}")
-                        try:
-                            on_new_file_callback(file_path)
-                        except Exception as e:
-                            logger.error(f"Error in callback for file {file_path}: {e}")
-                    else:
-                        logger.error("No callback function registered for file processing")
-                else:
-                    logger.warning(f"File did not stabilize within timeout period: {file_path}")
-            else:
-                logger.info(f"Non-video file ignored: {file_path}")
 
 def wait_for_file_stability(file_path, check_interval=1, max_wait_time=30, size_change_threshold=0):
     """
@@ -189,7 +148,7 @@ def is_video_file(file_path):
 
 def register_callback(callback_function):
     """
-    Register a callback function to be called when a new file is detected
+    Register a callback function to be called when a video file is found
     
     Args:
         callback_function (function): Function to call with the file path
@@ -198,9 +157,64 @@ def register_callback(callback_function):
     on_new_file_callback = callback_function
     logger.info(f"Callback function registered: {callback_function.__name__ if callback_function else None}")
 
+def scan_folder_for_videos(folder_path):
+    """
+    Scan a folder for video files and process them
+    
+    Args:
+        folder_path (str): Path to scan for videos
+        
+    Returns:
+        int: Number of video files found and processed
+    """
+    global processed_files
+    
+    if not folder_path or not os.path.exists(folder_path) or not os.path.isdir(folder_path):
+        logger.error(f"Invalid folder path for scanning: {folder_path}")
+        return 0
+    
+    logger.info(f"Scanning for video files in {folder_path}")
+    
+    file_count = 0
+    video_count = 0
+    
+    try:
+        files = os.listdir(folder_path)
+        file_count = len(files)
+        logger.info(f"Found {file_count} files in directory")
+        
+        for filename in files:
+            file_path = os.path.join(folder_path, filename)
+            logger.info(f"Checking file: {file_path}")
+            
+            if os.path.isfile(file_path):
+                if is_video_file(file_path) and file_path not in processed_files:
+                    if wait_for_file_stability(file_path, max_wait_time=60):
+                        # Only add to processed files if it's stable
+                        video_count += 1
+                        logger.info(f"Found stable video file: {file_path}")
+                        processed_files.add(file_path)
+                        
+                        if on_new_file_callback:
+                            try:
+                                on_new_file_callback(file_path)
+                            except Exception as e:
+                                logger.error(f"Error processing file {file_path}: {e}")
+                        else:
+                            logger.error("No callback function registered for file processing")
+                    else:
+                        logger.warning(f"Skipping unstable video file: {file_path}")
+        
+        logger.info(f"Scanned {file_count} files, found {video_count} stable videos")
+        return video_count
+        
+    except Exception as e:
+        logger.error(f"Error scanning folder: {e}")
+        return 0
+
 def start_monitoring(watch_folder, check_existing=True):
     """
-    Start monitoring a folder for new video files
+    Start monitoring a folder for video files
     
     Args:
         watch_folder (str): Path to the folder to monitor
@@ -209,7 +223,7 @@ def start_monitoring(watch_folder, check_existing=True):
     Returns:
         bool: True if monitoring started successfully, False otherwise
     """
-    global observer, is_monitoring, current_watch_folder, processed_files
+    global is_monitoring, current_watch_folder, processed_files
     
     if is_monitoring:
         logger.warning(f"Already monitoring a folder: {current_watch_folder}")
@@ -243,82 +257,37 @@ def start_monitoring(watch_folder, check_existing=True):
     
     # Reset the processed files when starting new monitoring
     processed_files = set()
-        
-    try:
-        # Set up watchdog observer
-        event_handler = VideoEventHandler()
-        observer = Observer()
-        observer.schedule(event_handler, watch_folder, recursive=False)
-        observer.start()
-        
-        is_monitoring = True
-        current_watch_folder = watch_folder
-        logger.info(f"Successfully started monitoring folder: {watch_folder}")
-        
-        # Check for existing files
-        if check_existing and on_new_file_callback:
-            logger.info(f"Scanning for existing video files in {watch_folder}")
-            file_count = 0
-            video_count = 0
-            
-            try:
-                files = os.listdir(watch_folder)
-                file_count = len(files)
-                logger.info(f"Found {file_count} files in directory")
-                
-                for filename in files:
-                    file_path = os.path.join(watch_folder, filename)
-                    logger.info(f"Checking file: {file_path}")
-                    
-                    if os.path.isfile(file_path):
-                        if is_video_file(file_path) and file_path not in processed_files:
-                            if wait_for_file_stability(file_path):
-                                video_count += 1
-                                logger.info(f"Found existing stable video file: {file_path}")
-                                processed_files.add(file_path)
-                                try:
-                                    on_new_file_callback(file_path)
-                                except Exception as e:
-                                    logger.error(f"Error processing existing file {file_path}: {e}")
-                            else:
-                                logger.warning(f"Skipping unstable video file: {file_path}")
-                
-                logger.info(f"Scanned {file_count} files, found {video_count} stable videos")
-            except Exception as e:
-                logger.error(f"Error scanning existing files: {e}")
-        
-        return True
-    except Exception as e:
-        logger.error(f"Error starting monitoring: {e}")
-        return False
+    
+    # Mark as monitoring and set the current watch folder
+    is_monitoring = True
+    current_watch_folder = watch_folder
+    
+    # Scan for existing files if requested
+    if check_existing and on_new_file_callback:
+        scan_count = scan_folder_for_videos(watch_folder)
+        logger.info(f"Initial scan complete: {scan_count} videos processed")
+    
+    logger.info(f"Successfully started monitoring folder: {watch_folder}")
+    return True
 
 def stop_monitoring():
     """
-    Stop monitoring for new video files
+    Stop monitoring for video files
     
     Returns:
         bool: True if monitoring stopped successfully, False otherwise
     """
-    global observer, is_monitoring, current_watch_folder
+    global is_monitoring, current_watch_folder
     
     if not is_monitoring:
         logger.warning("Not currently monitoring any folder")
         return True
-        
-    try:
-        if observer:
-            logger.info(f"Stopping folder monitoring for: {current_watch_folder}")
-            observer.stop()
-            observer.join()
-            observer = None
-            
-        is_monitoring = False
-        current_watch_folder = None
-        logger.info("Successfully stopped monitoring")
-        return True
-    except Exception as e:
-        logger.error(f"Error stopping monitoring: {e}")
-        return False
+    
+    # Reset state
+    is_monitoring = False
+    current_watch_folder = None
+    logger.info("Successfully stopped monitoring")
+    return True
 
 def get_monitoring_status():
     """
@@ -337,3 +306,16 @@ def get_current_watch_folder():
         str: Path to the currently monitored folder, or None if not monitoring
     """
     return current_watch_folder
+
+def manual_scan():
+    """
+    Manually trigger a scan of the current watch folder
+    
+    Returns:
+        int: Number of new videos found and processed, or -1 if not monitoring
+    """
+    if not is_monitoring or not current_watch_folder:
+        logger.warning("Not currently monitoring any folder")
+        return -1
+    
+    return scan_folder_for_videos(current_watch_folder)
